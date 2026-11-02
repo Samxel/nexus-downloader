@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build exe
+        run: >
+          pyinstaller --onefile --console --name nexus-downloader
+          --add-data "config.example.toml;."
+          --collect-all curl_cffi
+          --collect-all py7zr
+          main.py
+
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          $dir = New-Item -ItemType Directory -Path smoke -Force
+          Copy-Item dist/nexus-downloader.exe $dir
+          Push-Location $dir
+          $out = (./nexus-downloader.exe 2>&1 | Out-String)
+          Pop-Location
+          Write-Output $out
+          if ($out -notmatch 'No session cookie set') { throw 'exe did not start as expected' }
+          foreach ($f in 'config.toml', 'mods.txt') {
+            if (-not (Test-Path "smoke/$f")) { throw "$f was not created next to the exe" }
+          }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = if ($env:GITHUB_REF_TYPE -eq 'tag') { "nexus-downloader-$env:GITHUB_REF_NAME" } else { 'nexus-downloader' }
+          New-Item -ItemType Directory -Path package -Force | Out-Null
+          Copy-Item dist/nexus-downloader.exe, config.example.toml, README.md package/
+          Compress-Archive -Path package/* -DestinationPath "$name.zip"
+          "ZIP=$name.zip" >> $env:GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexus-downloader
+          path: ${{ env.ZIP }}
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" "${{ env.ZIP }}" --title "${{ github.ref_name }}" --generate-notes
