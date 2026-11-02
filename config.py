@@ -1,12 +1,20 @@
 import shutil
+import sys
 import tomllib
 from pathlib import Path
 
-BASE_DIR = Path(__file__).parent
+if getattr(sys, "frozen", False):
+    # Built .exe: keep config, mod list, downloads and logs next to the .exe,
+    # not in the temporary folder PyInstaller unpacks itself to.
+    BASE_DIR = Path(sys.executable).parent
+    BUNDLE_DIR = Path(sys._MEIPASS)
+else:
+    BASE_DIR = BUNDLE_DIR = Path(__file__).parent
 CONFIG_FILE = BASE_DIR / "config.toml"
 
 if not CONFIG_FILE.exists():
-    shutil.copy(BASE_DIR / "config.example.toml", CONFIG_FILE)
+    example = BASE_DIR / "config.example.toml"
+    shutil.copy(example if example.exists() else BUNDLE_DIR / "config.example.toml", CONFIG_FILE)
 
 with open(CONFIG_FILE, "rb") as fh:
     _cfg = tomllib.load(fh)
