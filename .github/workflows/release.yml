@@ -6,6 +6,10 @@ on:
       - 'v*'
   pull_request:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release this version (e.g. 1.0.0); leave empty to only build'
+        required: false
 
 permissions:
   contents: write
@@ -47,10 +51,16 @@ jobs:
             if (-not (Test-Path "smoke/$f")) { throw "$f was not created next to the exe" }
           }
 
+      - name: Release tag
+        shell: pwsh
+        run: |
+          $tag = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } elseif ('${{ inputs.version }}') { 'v' + '${{ inputs.version }}'.TrimStart('v') } else { '' }
+          "TAG=$tag" >> $env:GITHUB_ENV
+
       - name: Package
         shell: pwsh
         run: |
-          $name = if ($env:GITHUB_REF_TYPE -eq 'tag') { "nexus-downloader-$env:GITHUB_REF_NAME" } else { 'nexus-downloader' }
+          $name = if ($env:TAG) { "nexus-downloader-$env:TAG" } else { 'nexus-downloader' }
           New-Item -ItemType Directory -Path package -Force | Out-Null
           Copy-Item dist/nexus-downloader.exe, config.example.toml, README.md package/
           Compress-Archive -Path package/* -DestinationPath "$name.zip"
@@ -62,7 +72,7 @@ jobs:
           path: ${{ env.ZIP }}
 
       - name: Publish release
-        if: github.ref_type == 'tag'
+        if: env.TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" "${{ env.ZIP }}" --title "${{ github.ref_name }}" --generate-notes
+        run: gh release create "${{ env.TAG }}" "${{ env.ZIP }}" --target "${{ github.sha }}" --title "${{ env.TAG }}" --generate-notes
