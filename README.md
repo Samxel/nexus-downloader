@@ -10,7 +10,16 @@ picking the right file, downloading it and optionally unpacking it.
   <img alt="nexus-downloader in the terminal" src="assets/terminal.png" width="800">
 </p>
 
+## Download (Windows)
+
+Grab the latest `nexus-downloader-vX.Y.Z.zip` from the
+[Releases](https://github.com/Samxel/nexus-downloader/releases) page, unzip it and
+double-click `nexus-downloader.exe`. No Python needed. `config.toml`, `mods.txt`,
+`downloads/` and `logs/` are created next to the `.exe`.
+
 ## Setup
+
+To run from source instead:
 
 ```bash
 pip install -r requirements.txt
@@ -29,6 +38,8 @@ https://www.nexusmods.com/skyrimspecialedition/mods/266
 ```
 
 ## Run
+
+Double-click `nexus-downloader.exe`, or from source:
 
 ```bash
 python main.py
