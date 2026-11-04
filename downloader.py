@@ -19,7 +19,7 @@ from config import (
     EXTRACT, FILE_CATEGORIES, MAX_PARALLEL_DOWNLOADS, MAX_QUEUED_LINKS, MOD_LIST, READ_TIMEOUT_S, REQUEST_DELAY_S,
     SCAN_DELAY_S, SEVEN_ZIP,
 )
-from nexus import generate_download_url, mod_files, mod_info
+from nexus import generate_download_url, mod_file, mod_files, mod_info
 from ui import (
     console, finish, fit, hms, log, open_log, progress, record_failure, short, size_str, stats, stats_lock, view,
 )
@@ -188,7 +188,7 @@ def file_size(f):
     return f.get("size_in_bytes") or f["size_kb"] * 1024
 
 
-def scan_mod(domain, mod_id):
+def scan_mod(domain, mod_id, file_id=None):
     label = f"mod ({mod_id})"
     try:
         info = mod_info(domain, mod_id)
@@ -196,9 +196,12 @@ def scan_mod(domain, mod_id):
         label = f"{name} ({mod_id})"
         if not info.get("available", True):
             raise RuntimeError(f"mod is {info.get('status', 'unavailable')} on Nexus, cannot be downloaded")
-        files = mod_files(domain, mod_id)
-        if not files:
-            raise RuntimeError(f"no file in categories {sorted(FILE_CATEGORIES)}")
+        if file_id is not None:
+            files = [mod_file(domain, mod_id, file_id)]
+        else:
+            files = mod_files(domain, mod_id)
+            if not files:
+                raise RuntimeError(f"no file in categories {sorted(FILE_CATEGORIES)}")
     except Exception as e:
         raise ModError(label, str(e)) from e
     folder = mod_folder(domain, mod_id, name)
@@ -215,22 +218,23 @@ class Scanner(threading.Thread):
         super().__init__(daemon=True)
         self.mods = mods
         self.results = {}
-        self.ready = {(domain, mod_id): threading.Event() for domain, mod_id, _ in mods}
+        self.ready = {(domain, mod_id, file_id): threading.Event() for domain, mod_id, file_id, _ in mods}
 
     def run(self):
-        for domain, mod_id, _ in self.mods:
+        for domain, mod_id, file_id, _ in self.mods:
             if stop_event.is_set():
                 return
+            key = (domain, mod_id, file_id)
             try:
-                result = scan_mod(domain, mod_id)
+                result = scan_mod(domain, mod_id, file_id)
                 todo = sum(file_size(f) for f, _, _, done in result[2] if not done)
             except Exception as e:
                 result, todo = e, 0
             with stats_lock:
                 stats["scanned"] += 1
                 stats["todo_bytes"] += todo
-            self.results[(domain, mod_id)] = result
-            self.ready[(domain, mod_id)].set()
+            self.results[key] = result
+            self.ready[key].set()
             stop_event.wait(SCAN_DELAY_S)
 
     def get(self, key):
@@ -252,10 +256,10 @@ class UpNext:
 
     def __rich__(self):
         lines = []
-        for domain, mod_id, _ in self.mods[stats["processed"]:]:
+        for domain, mod_id, file_id, _ in self.mods[stats["processed"]:]:
             if len(lines) == len(self.STYLES):
                 break
-            key = (domain, mod_id)
+            key = (domain, mod_id, file_id)
             if key in submitted:
                 continue
             style = self.STYLES[len(lines)]
@@ -275,9 +279,10 @@ class UpNext:
 submitted = set()
 
 
-def queue_mod(scanner, domain, mod_id, link, pool, slots, futures):
+def queue_mod(scanner, domain, mod_id, file_id, link, pool, slots, futures):
+    key = (domain, mod_id, file_id)
     try:
-        label, folder, items = scanner.get((domain, mod_id))
+        label, folder, items = scanner.get(key)
     except ModError as e:
         record_failure(e.label, link, str(e))
         return
@@ -299,7 +304,7 @@ def queue_mod(scanner, domain, mod_id, link, pool, slots, futures):
             url = generate_download_url(domain, mod_id, f["file_id"])
             folder.mkdir(parents=True, exist_ok=True)
             futures.append(pool.submit(worker, slots, url, target, out, file_size(f), label))
-            submitted.add((domain, mod_id))
+            submitted.add(key)
         except Stopped:
             slots.release()
             raise
@@ -324,9 +329,13 @@ def read_mod_list():
     mods, seen = [], set()
     for line in MOD_LIST.read_text(encoding="utf-8").splitlines():
         hit = re.search(r"nexusmods\.com/(\w+)/mods/(\d+)", line)
-        if hit and (hit[1], hit[2]) not in seen:
-            seen.add((hit[1], hit[2]))
-            mods.append((hit[1], int(hit[2]), line.strip()))
+        file_hit = re.search(r"[?&]file_id=(\d+)", line)
+        if not hit:
+            continue
+        key = (hit[1], int(hit[2]), int(file_hit[1]) if file_hit else None)
+        if key not in seen:
+            seen.add(key)
+            mods.append((*key, line.strip()))
     return mods
 
 
@@ -364,8 +373,8 @@ def run():
     try:
         with Live(view(UpNext(scanner, mods)), console=console, screen=True, refresh_per_second=10):
             try:
-                for domain, mod_id, link in mods:
-                    queue_mod(scanner, domain, mod_id, link, pool, slots, futures)
+                for domain, mod_id, file_id, link in mods:
+                    queue_mod(scanner, domain, mod_id, file_id, link, pool, slots, futures)
                     stats["processed"] += 1
                 while not all(f.done() for f in futures):
                     time.sleep(0.25)

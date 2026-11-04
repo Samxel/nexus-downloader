@@ -47,6 +47,10 @@ def mod_info(domain, mod_id):
     return api_get(f"/games/{domain}/mods/{mod_id}.json")
 
 
+def mod_file(domain, mod_id, file_id):
+    return api_get(f"/games/{domain}/mods/{mod_id}/files/{file_id}.json")
+
+
 def mod_files(domain, mod_id):
     all_files = api_get(f"/games/{domain}/mods/{mod_id}/files.json")["files"]
     files = [f for f in all_files if f["category_name"] in FILE_CATEGORIES]
